@@ -55,5 +55,5 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: PNGService Build ${{ github.run_number }}
-          files: RBXMXService.rbxmx
+          files: PNGService.rbxmx
           body: ${{ steps.commit.outputs.body }}
