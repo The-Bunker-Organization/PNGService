@@ -19,7 +19,7 @@
 
 ## Building
 
-The project uses a `Rojo` format that can be built as a RBXM or RBXMX,Check [Releases](https://github.com/The-Bunker-Organization/RBXMXService/releases) for the RBXM without building yourself.
+The project uses a `Rojo` format that can be built as a RBXM or RBXMX,Check [Releases](https://github.com/The-Bunker-Organization/PNGService/releases) for the RBXM without building yourself.
 
 ## Using RBXM
 Just path it to your instance or GUI for using it,it will generate a GUI for it using the PNG binary parsed
