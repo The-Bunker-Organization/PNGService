@@ -1,16 +1,14 @@
-# RBXMXService
+# PNGService
 
 > [!IMPORTANT]
-> **RBXMXService is currently in Beta!**
+> **PNGService is currently in Beta!**
 > Please report bugs or issues on our [Discord Server](https://canary.discord.com/invite/MvVBbftUYm).
 >
 > For urgent questions, contact us at **[thebunkerproject@waifu.club](mailto:thebunkerproject@waifu.club)**.
 
 ## About
 
-**RBXMXService** is a runtime **RBXMX loader** that allows you to load `.rbxmx` files directly inside a Roblox environment.
-
-It is designed to work with a `loadstring`/compiler environment,allowing RBXMX content to be loaded without manually converting the file beforehand.
+**PNGService** is a runtime **PNG loader** that allows you to load PNGS files directly inside a Roblox environment without publishing.
 
 ### Features
 
