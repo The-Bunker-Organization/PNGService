@@ -6,21 +6,22 @@ local PngService = {}
 PngService.__index = PngService
 
 local PNG = require(script.PNG)
+local GIF = require(script.GIF)
 
--- Default configuration
+PngService.GIF = GIF
+
 local DEFAULT_CONFIG = {
-	MaxScale = 750,        -- Max dimension before downscaling
-	PixelSize = 1,         -- Size of each pixel in the gradient (Default mode only)
-	MaxKeys = 20,          -- Max pixels per gradient chunk (Default mode)
-	MaxSpans = 10,         -- Max color spans per gradient batch (Groovy mode)
-	Mode = "Default",      -- Render mode: "Default"|"Gradient"|"Groovy"|"Legacy"|"Text"|"TextLabel"
-	Legacy = false,        -- Shorthand to enable Groovy/Legacy mode
-	TextChunkRows = 75,    -- Rows of pixels packed into each TextLabel (Text mode)
-	TextChar = "█",        -- Full-block character used as a pixel (Text mode)
-	TextSize = 8          -- Font size in px; tune to match your canvas resolution (Text mode)
+	MaxScale = 750,
+	PixelSize = 1,
+	MaxKeys = 20,
+	MaxSpans = 10,
+	Mode = "Default",
+	Legacy = false,
+	TextChunkRows = 75,
+	TextChar = "█",
+	TextSize = 8
 }
 
--- Resolve which render mode to use from config
 local function resolveMode(config)
 	if config.Legacy == true then
 		return "Groovy"
@@ -29,10 +30,9 @@ local function resolveMode(config)
 	if mode == "Legacy"    then return "Groovy" end
 	if mode == "Gradient"  then return "Default" end
 	if mode == "TextLabel" then return "Text" end
-	return mode -- "Default" | "Groovy" | "Text"
+	return mode
 end
 
--- Quantize color to reduce unique colors
 local function quantizeChannel(value)
 	return math.floor((value + 8) / 17) * 17
 end
@@ -44,17 +44,14 @@ local function quantizeColor(px)
 	return Color3.fromRGB(r, g, b)
 end
 
--- Compare two Color3 values for equality
 local function colorsEqual(c1, c2)
 	if not c1 or not c2 then return false end
 	return c1.R == c2.R and c1.G == c2.G and c1.B == c2.B
 end
 
--- Main constructor
 function PngService:Generate(url, targetPart, surfaceFace, config)
 	local self = setmetatable({}, PngService)
 
-	-- Merge config with defaults
 	self.config = {}
 	for k, v in pairs(DEFAULT_CONFIG) do
 		self.config[k] = config and config[k] ~= nil and config[k] or v
@@ -65,14 +62,74 @@ function PngService:Generate(url, targetPart, surfaceFace, config)
 	self.surfaceFace = surfaceFace or Enum.NormalId.Front
 	self.renderMode = resolveMode(self.config)
 
-	-- Start rendering
 	self:_render()
 
 	return self
 end
 
+function PngService:GenerateGIF(data, targetPart, surfaceFace, config)
+	local self = setmetatable({}, PngService)
+
+	self.config = {}
+	for k, v in pairs(DEFAULT_CONFIG) do
+		self.config[k] = config and config[k] ~= nil and config[k] or v
+	end
+
+	self.targetPart = targetPart
+	self.surfaceFace = surfaceFace or Enum.NormalId.Front
+	self.renderMode = resolveMode(self.config)
+
+	self.player = GIF.Player.new(data)
+
+	local gifWidth, gifHeight = self.player:GetDimensions()
+
+	local scaleFactor = 1
+	local MAX_DIM = self.config.MaxScale
+	if gifWidth > MAX_DIM or gifHeight > MAX_DIM then
+		scaleFactor = math.min(MAX_DIM / gifWidth, MAX_DIM / gifHeight)
+	end
+
+	self.width = math.floor(gifWidth * scaleFactor)
+	self.height = math.floor(gifHeight * scaleFactor)
+	self.scaleFactor = scaleFactor
+
+	if self.renderMode == "Text" then
+		local TEXT_SIZE = self.config.TextSize
+		local CHAR      = self.config.TextChar
+		local measured  = TextService:GetTextSize(
+			CHAR, TEXT_SIZE, Enum.Font.Code, Vector2.new(math.huge, math.huge)
+		)
+		self._textCharW = measured.X
+		self._textCharH = measured.Y
+	end
+
+	local container = self:_setupContainer()
+
+	self.player.FrameChanged:Connect(function(_, frame)
+		self.img = frame
+		local pixelBuffer = self:_buildPixelBuffer()
+
+		if self.rowsContainer then
+			self.rowsContainer:Destroy()
+			self.rowsContainer = nil
+		end
+
+		if self.renderMode == "Groovy" then
+			self:_renderRowsGroovy(container, pixelBuffer)
+		elseif self.renderMode == "Text" then
+			self:_renderRowsText(container, pixelBuffer)
+		else
+			self:_renderRows(container, pixelBuffer)
+		end
+	end)
+
+	self.player:Play()
+
+	return self
+end
+
 function PngService:_render()
-	-- Load PNG from URL
+
 	local success, data = pcall(function()
 		return HttpService:GetAsync(self.url)
 	end)
@@ -83,7 +140,6 @@ function PngService:_render()
 
 	local img = PNG.new(data)
 
-	-- Calculate dimensions with downscaling
 	local scaleFactor = 1
 	local MAX_DIM = self.config.MaxScale
 	if img.Width > MAX_DIM or img.Height > MAX_DIM then
@@ -95,7 +151,6 @@ function PngService:_render()
 	self.scaleFactor = scaleFactor
 	self.img = img
 
-	-- Pre-measure glyph dimensions for Text mode so _setupContainer can use them
 	if self.renderMode == "Text" then
 		local TEXT_SIZE = self.config.TextSize
 		local CHAR      = self.config.TextChar
@@ -106,13 +161,10 @@ function PngService:_render()
 		self._textCharH = measured.Y
 	end
 
-	-- Setup container based on target type
 	local container = self:_setupContainer()
 
-	-- Build pixel buffer
 	local pixelBuffer = self:_buildPixelBuffer()
 
-	-- Render rows using the configured mode
 	if self.renderMode == "Groovy" then
 		self:_renderRowsGroovy(container, pixelBuffer)
 	elseif self.renderMode == "Text" then
@@ -128,7 +180,6 @@ function PngService:_setupContainer()
 	local targetPart = self.targetPart
 	local PIXEL_SIZE = self.config.PixelSize
 
-	-- In Text mode the canvas is measured in actual glyph px, not PixelSize units
 	local isTextMode = (self.renderMode == "Text")
 	local canvasW = isTextMode and (self.width  * self._textCharW) or (self.width  * PIXEL_SIZE)
 	local canvasH = isTextMode and (self.height * self._textCharH) or (self.height * PIXEL_SIZE)
@@ -189,10 +240,6 @@ function PngService:_buildPixelBuffer()
 
 	return pixelBuffer
 end
-
--- ─────────────────────────────────────────────
--- DEFAULT / GRADIENT RENDER MODE
--- ─────────────────────────────────────────────
 
 function PngService:_renderRows(container, pixelBuffer)
 	local WIDTH = self.width
@@ -280,11 +327,6 @@ function PngService:_renderRows(container, pixelBuffer)
 	self.rowsContainer = rowsContainer
 end
 
--- ─────────────────────────────────────────────
--- GROOVY / LEGACY RENDER MODE
--- ─────────────────────────────────────────────
-
--- Build run-length encoded spans from a pixel row
 local function buildSpans(row, width)
 	local spans = {}
 	local i = 1
@@ -300,7 +342,6 @@ local function buildSpans(row, width)
 	return spans
 end
 
--- Render a single batch of spans as one Frame + UIGradient
 local function renderBatch(parent, spans, totalSpanWidth, yIndex, startXIndex, scaleW, scaleH)
 	local f = Instance.new("Frame")
 	f.Name = "Span"
@@ -322,11 +363,11 @@ local function renderBatch(parent, spans, totalSpanWidth, yIndex, startXIndex, s
 		table.insert(keypoints, ColorSequenceKeypoint.new(startRatio, color))
 
 		if i < #spans then
-			-- Hard edge: duplicate keypoints with tiny offset so no interpolation leaks
+
 			local nextStart = math.clamp(endRatio + 0.0001, 0, 1)
 			table.insert(keypoints, ColorSequenceKeypoint.new(endRatio, color))
 			if nextStart < 1 then
-				-- nextStart keypoint will be added as startRatio of the next span on the next iteration
+
 			end
 		else
 			table.insert(keypoints, ColorSequenceKeypoint.new(endRatio, color))
@@ -342,7 +383,7 @@ local function renderBatch(parent, spans, totalSpanWidth, yIndex, startXIndex, s
 	if ok then
 		gradient.Parent = f
 	else
-		-- Fallback: solid color from first span
+
 		f.BackgroundColor3 = spans[1].color
 		gradient:Destroy()
 	end
@@ -365,10 +406,8 @@ function PngService:_renderRowsGroovy(container, pixelBuffer)
 	for y = 1, HEIGHT do
 		local row = pixelBuffer[y]
 
-		-- Build run-length spans for this row
 		local spans = buildSpans(row, WIDTH)
 
-		-- Batch spans into groups of MAX_SPANS
 		local batchSpans = {}
 		local batchPixelWidth = 0
 		local batchStartX = 1
@@ -388,12 +427,10 @@ function PngService:_renderRowsGroovy(container, pixelBuffer)
 			currentX += span.len
 		end
 
-		-- Flush remaining spans
 		if #batchSpans > 0 then
 			renderBatch(rowsContainer, batchSpans, batchPixelWidth, y, batchStartX, scaleW, scaleH)
 		end
 
-		-- Yield occasionally to prevent timeout
 		if y % 4 == 0 then
 			RunService.Heartbeat:Wait()
 		end
@@ -402,45 +439,16 @@ function PngService:_renderRowsGroovy(container, pixelBuffer)
 	self.rowsContainer = rowsContainer
 end
 
--- ─────────────────────────────────────────────
--- TEXT / TEXTLABEL RENDER MODE
--- ─────────────────────────────────────────────
-
---[[
-	Each chunk of TextChunkRows pixel-rows is packed into one TextLabel using
-	Roblox RichText <font color="rgb(r,g,b)"> tags.
-
-	Optimisation: the currently-open color tag is carried across newlines, so a
-	new tag is only emitted when the color actually changes.  This keeps the
-	string as short as possible while being 100% correct.
-
-	Layout:
-	  • TextLabel fills the full width of the container (scale 1, 0).
-	  • Height in scale = chunkRows / totalHeight, positioned at the matching
-	    y-offset so all chunks tile perfectly with no gaps.
-	  • Font.Code (monospace) is used so every █ character has equal width and
-	    height, giving square "pixels".  Tune TextSize to your canvas resolution.
-]]
-
 function PngService:_renderRowsText(container, pixelBuffer)
 	local WIDTH     = self.width
 	local HEIGHT    = self.height
 	local CHAR      = self.config.TextChar
 	local TEXT_SIZE = self.config.TextSize
 
-	-- Use the glyph dimensions measured in _render (before container setup)
 	local charW = self._textCharW
 	local charH = self._textCharH
 
-	-- Roblox caps TextLabel.Text at 200,000 characters.
-	-- Worst case per row: every pixel is a different color, so each pixel costs:
-	--   <font color="rgb(255,255,255)"> = 30 chars
-	--   █                               =  1 char
-	--   </font>                         =  7 chars
-	-- Plus one \n per row separator.
-	-- We use this upper bound to derive the maximum safe rows per chunk,
-	-- then clamp the user-configured TextChunkRows to that value.
-	local ROBLOX_TEXT_LIMIT  = 199000   -- 1k headroom below the hard 200k cap
+	local ROBLOX_TEXT_LIMIT  = 199000
 	local WORST_CHARS_PER_ROW = WIDTH * (30 + 1 + 7) + 1
 	local maxSafeChunkRows   = math.max(1, math.floor(ROBLOX_TEXT_LIMIT / WORST_CHARS_PER_ROW))
 	local CHUNK = math.min(self.config.TextChunkRows, maxSafeChunkRows)
@@ -456,7 +464,6 @@ function PngService:_renderRowsText(container, pixelBuffer)
 		local endRow    = math.min(startRow + CHUNK - 1, HEIGHT)
 		local chunkRows = endRow - startRow + 1
 
-		-- ── Build the RichText string for this chunk ──────────────────────────
 		local parts     = {}
 		local openColor = nil
 
@@ -498,11 +505,9 @@ function PngService:_renderRowsText(container, pixelBuffer)
 			table.insert(parts, "</font>")
 		end
 
-		-- ── Create the TextLabel ──────────────────────────────────────────────
-		-- Use measured charW/charH so each glyph occupies an exact square region.
-		local topPx    = (startRow - 1) * charH   -- y offset in canvas px
-		local heightPx = chunkRows      * charH   -- pixel height of this chunk
-		local widthPx  = WIDTH          * charW   -- exact text content width
+		local topPx    = (startRow - 1) * charH
+		local heightPx = chunkRows      * charH
+		local widthPx  = WIDTH          * charW
 
 		local label = Instance.new("TextLabel")
 		label.Name              = "TextChunk_" .. chunkIndex
@@ -518,7 +523,7 @@ function PngService:_renderRowsText(container, pixelBuffer)
 		label.TextWrapped       = false
 		label.ClipsDescendants  = false
 		label.AutomaticSize     = Enum.AutomaticSize.None
-		-- Absolute sizing: width matches actual glyph columns, height matches glyph rows
+
 		label.Position = UDim2.fromOffset(0, topPx)
 		label.Size     = UDim2.new(0, widthPx, 0, heightPx)
 		label.Parent   = rowsContainer
@@ -532,11 +537,11 @@ function PngService:_renderRowsText(container, pixelBuffer)
 	self.rowsContainer = rowsContainer
 end
 
--- ─────────────────────────────────────────────
--- PUBLIC API
--- ─────────────────────────────────────────────
-
 function PngService:Destroy()
+	if self.player then
+		self.player:Destroy()
+	end
+
 	if self.container and self.container:IsA("SurfaceGui") then
 		self.container:Destroy()
 	elseif self.containerFrame then
