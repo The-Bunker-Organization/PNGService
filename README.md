@@ -1,36 +1,35 @@
 # PNGService
 
 > [!IMPORTANT]
-> **PNGService is currently in Beta!**
+> **WavService is currently in Beta!**
 > Please report bugs or issues on our [Discord Server](https://canary.discord.com/invite/MvVBbftUYm).
 >
-> For urgent questions, contact us at **[thebunkerproject@waifu.club](mailto:thebunkerproject@waifu.club)**.
 
 ## About
 
-**PNGService** is a runtime **PNG loader** that allows you to load PNGS files directly inside a Roblox environment without publishing.
+**WavService** is a runtime **Sound Player** that allows you to load `.wav` files directly Roblox sound services directly.
 
 ### Features
 
-* Runtime image loading without publishing
+* Runtime Sound loading without publishing
 * Works through a Roblox env by default
-* Parse any PNG type file
+* Parse any .Wav type file
 * Currently in **Beta**
 
 ## Building
 
-The project uses a `Rojo` format that can be built as a RBXM or RBXMX,Check [Releases](https://github.com/The-Bunker-Organization/PNGService/releases) for the RBXM without building yourself.
+The project uses a `Rojo` format that can be built as a RBXM or RBXMX,Check [Releases](https://github.com/The-Bunker-Organization/WavService/releases) for the RBXM without building yourself.
 
 ## Using RBXM
-Just path it to your instance or GUI for using it,it will generate a GUI for it using the PNG binary parsed
-```
-local PngService = require(path.to.MainModule) --you can also upload it and use as a module id like require(670000)
+Just path it to your instance,it ill add a hopperbin with the functionality inside it
 
-local renderer = PngService:Generate(
-	"https://example.com/image.png",
-	workspace.Part, --or any instance
-	Enum.NormalId.Front --side you wanna
-)
+### Basic Format
+```
+local SoundService = require(path.to.MainModule) --you can also upload it and use as a module id like require(670000)
+
+local sound = SoundService:Init("https://example.com/audio.wav") --NEEDS to be a .wav format
+sound.Volume = 0.5 --Volume
+sound:Play()
 ```
 
 ## Status
@@ -45,11 +44,12 @@ local renderer = PngService:Generate(
 Found a bug or have an improvement?
 
 * Open an issue on the repository.
+* Fork repository with your fix or addition.
 * For urgent questions, email **[thebunkerproject@waifu.club](mailto:thebunkerproject@waifu.club)**.
 
 ## License
 
-PNGService is free and open-source software licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+WavService is free and open-source software licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
 You are free to use, modify, and redistribute the software under the terms of the license.
 
 See the [LICENSE](LICENSE) file for the full license text.
