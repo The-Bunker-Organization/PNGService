@@ -15,6 +15,7 @@
 * Runtime image loading without publishing
 * Works through a Roblox env by default
 * Parse any PNG type file
+* Render a specific frame of a GIF as a still image (no auto-playback)
 * Currently in **Beta**
 
 ## Building
@@ -32,6 +33,29 @@ local renderer = PngService:Generate(
 	Enum.NormalId.Front --side you wanna
 )
 ```
+
+### GIF support
+
+`Generate()` also accepts GIFs, but it renders a single still frame rather than playing the animation — GIFs no longer animate automatically. Pick which frame to render with the optional `Frame` field in the config table:
+
+```
+local PngService = require(path.to.MainModule)
+
+local renderer = PngService:Generate(
+	"https://example.com/image.gif",
+	workspace.Part,
+	Enum.NormalId.Front,
+	{
+		Frame = 5
+	}
+)
+```
+
+* `Frame` is **1-based** — the first frame of the GIF is `Frame = 1`.
+* If `Frame` is omitted, it defaults to `1`.
+* `Frame` must be a whole number between `1` and the GIF's total frame count; anything else (`0`, negative, non-integer, or past the last frame) makes `Generate()` error instead of silently wrapping around.
+* Static PNGs ignore `Frame` entirely, since a PNG only ever has one frame.
+* `GenerateGIF()` has been removed. Use `Generate()` for both PNGs and GIFs going forward.
 
 ## Status
 

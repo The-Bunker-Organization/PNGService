@@ -8,8 +8,6 @@ PngService.__index = PngService
 local PNG = require(script.PNG)
 local GIF = require(script.GIF)
 
-PngService.GIF = GIF
-
 local DEFAULT_CONFIG = {
 	MaxScale = 750,
 	PixelSize = 1,
@@ -19,8 +17,42 @@ local DEFAULT_CONFIG = {
 	Legacy = false,
 	TextChunkRows = 75,
 	TextChar = "█",
-	TextSize = 8
+	TextSize = 8,
+	Frame = 1
 }
+
+local PNG_SIGNATURE = "\137PNG\r\n\26\n"
+local GIF_SIGNATURE_87 = "GIF87a"
+local GIF_SIGNATURE_89 = "GIF89a"
+
+local function detectFormat(data)
+	if data:sub(1, #PNG_SIGNATURE) == PNG_SIGNATURE then
+		return "PNG"
+	end
+
+	local gifHeader = data:sub(1, 6)
+	if gifHeader == GIF_SIGNATURE_87 or gifHeader == GIF_SIGNATURE_89 then
+		return "GIF"
+	end
+
+	error("PngService - Unrecognized image format (expected PNG or GIF).", 3)
+end
+
+local function validateFrameConfig(frame)
+	if type(frame) ~= "number" then
+		error("PngService - config.Frame must be a number, got " .. type(frame), 3)
+	end
+
+	if frame ~= math.floor(frame) then
+		error("PngService - config.Frame must be an integer, got " .. tostring(frame), 3)
+	end
+
+	if frame < 1 then
+		error("PngService - config.Frame must be >= 1 (frames are 1-based), got " .. tostring(frame), 3)
+	end
+
+	return frame
+end
 
 local function resolveMode(config)
 	if config.Legacy == true then
@@ -56,6 +88,7 @@ function PngService:Generate(url, targetPart, surfaceFace, config)
 	for k, v in pairs(DEFAULT_CONFIG) do
 		self.config[k] = config and config[k] ~= nil and config[k] or v
 	end
+	self.config.Frame = validateFrameConfig(self.config.Frame)
 
 	self.url = url
 	self.targetPart = targetPart
@@ -63,67 +96,6 @@ function PngService:Generate(url, targetPart, surfaceFace, config)
 	self.renderMode = resolveMode(self.config)
 
 	self:_render()
-
-	return self
-end
-
-function PngService:GenerateGIF(data, targetPart, surfaceFace, config)
-	local self = setmetatable({}, PngService)
-
-	self.config = {}
-	for k, v in pairs(DEFAULT_CONFIG) do
-		self.config[k] = config and config[k] ~= nil and config[k] or v
-	end
-
-	self.targetPart = targetPart
-	self.surfaceFace = surfaceFace or Enum.NormalId.Front
-	self.renderMode = resolveMode(self.config)
-
-	self.player = GIF.Player.new(data)
-
-	local gifWidth, gifHeight = self.player:GetDimensions()
-
-	local scaleFactor = 1
-	local MAX_DIM = self.config.MaxScale
-	if gifWidth > MAX_DIM or gifHeight > MAX_DIM then
-		scaleFactor = math.min(MAX_DIM / gifWidth, MAX_DIM / gifHeight)
-	end
-
-	self.width = math.floor(gifWidth * scaleFactor)
-	self.height = math.floor(gifHeight * scaleFactor)
-	self.scaleFactor = scaleFactor
-
-	if self.renderMode == "Text" then
-		local TEXT_SIZE = self.config.TextSize
-		local CHAR      = self.config.TextChar
-		local measured  = TextService:GetTextSize(
-			CHAR, TEXT_SIZE, Enum.Font.Code, Vector2.new(math.huge, math.huge)
-		)
-		self._textCharW = measured.X
-		self._textCharH = measured.Y
-	end
-
-	local container = self:_setupContainer()
-
-	self.player.FrameChanged:Connect(function(_, frame)
-		self.img = frame
-		local pixelBuffer = self:_buildPixelBuffer()
-
-		if self.rowsContainer then
-			self.rowsContainer:Destroy()
-			self.rowsContainer = nil
-		end
-
-		if self.renderMode == "Groovy" then
-			self:_renderRowsGroovy(container, pixelBuffer)
-		elseif self.renderMode == "Text" then
-			self:_renderRowsText(container, pixelBuffer)
-		else
-			self:_renderRows(container, pixelBuffer)
-		end
-	end)
-
-	self.player:Play()
 
 	return self
 end
@@ -138,7 +110,22 @@ function PngService:_render()
 		error("Failed to load image from URL: " .. tostring(data))
 	end
 
-	local img = PNG.new(data)
+	local format = detectFormat(data)
+
+	local img
+	if format == "GIF" then
+		local gif = GIF.new(data)
+		local frameCount = gif:GetFrameCount()
+		local frameIndex = self.config.Frame
+
+		if frameIndex > frameCount then
+			error(("PngService - Frame %d requested, but the GIF only has %d frame(s)."):format(frameIndex, frameCount), 2)
+		end
+
+		img = gif:GetFrame(frameIndex)
+	else
+		img = PNG.new(data)
+	end
 
 	local scaleFactor = 1
 	local MAX_DIM = self.config.MaxScale
@@ -538,10 +525,6 @@ function PngService:_renderRowsText(container, pixelBuffer)
 end
 
 function PngService:Destroy()
-	if self.player then
-		self.player:Destroy()
-	end
-
 	if self.container and self.container:IsA("SurfaceGui") then
 		self.container:Destroy()
 	elseif self.containerFrame then
