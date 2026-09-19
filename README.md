@@ -26,7 +26,7 @@ The project uses a `Rojo` format that can be built as a RBXM or RBXMX,Check [Rel
 
 ## Using RBXM
 Just path it to your instance or GUI for using it,it will generate a GUI for it using the PNG binary parsed
-```
+```lua
 local PngService = require(path.to.MainModule) --you can also upload it and use as a module id like require(6700000)
 
 local renderer = PngService:Generate(
@@ -40,7 +40,7 @@ local renderer = PngService:Generate(
 
 `Generate()` caches downloaded and parsed image data internally, keyed by URL. Calling `Generate()` again with the exact same URL - whether for the same renderer or a brand-new one. reuses that cached data instead of issuing another `HttpService:GetAsync()` request or re-parsing the binary image data:
 
-```
+```lua
 local a = PngService:Generate("https://example.com/image.png", workspace.PartA, Enum.NormalId.Front)
 local b = PngService:Generate("https://example.com/image.png", workspace.PartB, Enum.NormalId.Front)
 -- Only one HTTP request was made for the two renderers above instead of wasting network onto the same image
@@ -58,7 +58,7 @@ A few details worth knowing:
 
 `Generate()` accepts GIFs and renders a single frame at a time, starting from whichever frame you specify (or `1` by default):
 
-```
+```lua
 local PngService = require(path.to.MainModule)
 
 local renderer = PngService:Generate(
@@ -81,7 +81,7 @@ local renderer = PngService:Generate(
 
 The renderer returned by `Generate()` can change which GIF frame is displayed after the fact, without downloading or re-parsing the GIF:
 
-```
+```lua
 local renderer = PngService:Generate(
 	"https://example.com/image.gif",
 	workspace.Part,
@@ -113,7 +113,7 @@ For GIFs, `SetFrame()` updates the same `EditableImage` in place; it never creat
 
 #### Configuring and inspecting EditableImage behavior
 
-```
+```lua
 local PngService = require(path.to.MainModule)
 
 -- Check whether EditableImage will actually be used, without generating anything:
