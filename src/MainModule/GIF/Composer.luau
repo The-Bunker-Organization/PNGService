@@ -101,9 +101,27 @@ local function applyDisposal(canvas, canvasWidth, canvasHeight, frame)
 
 end
 
-function Composer.new(data)
-	local raw = Decoder.Decode(data)
+--[[
+	Composer.fromRaw(raw)
 
+	Builds a Composer directly from an already-decoded raw GIF
+	structure (Decoder.Decode's output), skipping the expensive LZW
+	decode step. This is what makes GIF caching worthwhile: PngService
+	can cache `raw` per URL and hand it to a fresh Composer.fromRaw()
+	for every renderer that requests it, without re-parsing the binary
+	GIF data.
+
+	Each frame descriptor is shallow-copied into a fresh per-composer
+	table here. The expensive parts of a frame (its LZW-decoded
+	`Indices` buffer and `ColorTable`) are shared by reference and
+	never copied, but the small per-frame metadata table is private to
+	this Composer -- specifically its lazily-computed `_snapshot`
+	field (used for disposal method 3, "restore to previous"). That
+	keeps every Composer's own canvas/cursor/snapshot state fully
+	independent, so two renderers seeking different frames of the same
+	cached GIF can never see or mutate each other's state.
+]]
+function Composer.fromRaw(raw)
 	local self = setmetatable({}, Composer)
 
 	self.Width = raw.Width
@@ -111,12 +129,33 @@ function Composer.new(data)
 	self.LoopCount = raw.LoopCount
 	self.BackgroundColorIndex = raw.BackgroundColorIndex
 	self.GlobalColorTable = raw.GlobalColorTable
-	self._frames = raw.Frames
+
+	local frames = table.create(#raw.Frames)
+	for i, frame in ipairs(raw.Frames) do
+		frames[i] = {
+			Left = frame.Left,
+			Top = frame.Top,
+			Width = frame.Width,
+			Height = frame.Height,
+			Indices = frame.Indices,
+			ColorTable = frame.ColorTable,
+			Delay = frame.Delay,
+			Disposal = frame.Disposal,
+			TransparentIndex = frame.TransparentIndex,
+			UserInput = frame.UserInput,
+		}
+	end
+	self._frames = frames
 
 	self._canvas = newCanvas(self.Width, self.Height)
 	self._cursor = 0
 
 	return self
+end
+
+function Composer.new(data)
+	local raw = Decoder.Decode(data)
+	return Composer.fromRaw(raw)
 end
 
 function Composer:GetFrameCount()

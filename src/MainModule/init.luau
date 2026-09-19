@@ -7,6 +7,13 @@ PngService.__index = PngService
 
 local PNG = require(script.PNG)
 local GIF = require(script.GIF)
+local Cache = require(script.Cache)
+local Capabilities = require(script.Capabilities)
+local EditableImage = require(script.EditableImage)
+
+PngService.Config = {
+	UseEditableImage = "Auto",
+}
 
 local DEFAULT_CONFIG = {
 	MaxScale = 750,
@@ -38,6 +45,32 @@ local function detectFormat(data)
 	error("PngService - Unrecognized image format (expected PNG or GIF).", 3)
 end
 
+local function parseImage(rawBody)
+	local format = detectFormat(rawBody)
+	if format == "GIF" then
+		return format, GIF.Decode(rawBody)
+	end
+	return format, PNG.new(rawBody)
+end
+
+local function validateParsed(format, parsed)
+	if type(parsed) ~= "table" then
+		return false
+	end
+
+	if format == "PNG" then
+		return type(parsed.Width) == "number" and parsed.Width > 0
+			and type(parsed.Height) == "number" and parsed.Height > 0
+			and type(parsed.Bitmap) == "table"
+	elseif format == "GIF" then
+		return type(parsed.Width) == "number" and parsed.Width > 0
+			and type(parsed.Height) == "number" and parsed.Height > 0
+			and type(parsed.Frames) == "table" and #parsed.Frames > 0
+	end
+
+	return false
+end
+
 local function validateFrameConfig(frame)
 	if type(frame) ~= "number" then
 		error("PngService - config.Frame must be a number, got " .. type(frame), 3)
@@ -52,6 +85,18 @@ local function validateFrameConfig(frame)
 	end
 
 	return frame
+end
+
+local function resolveUseEditableImage(perCallOverride)
+	if perCallOverride == false then
+		return false
+	end
+
+	if perCallOverride == nil and PngService.Config.UseEditableImage == false then
+		return false
+	end
+
+	return Capabilities.SupportsEditableImage()
 end
 
 local function resolveMode(config)
@@ -90,6 +135,12 @@ function PngService:Generate(url, targetPart, surfaceFace, config)
 	end
 	self.config.Frame = validateFrameConfig(self.config.Frame)
 
+	if config ~= nil and config.UseEditableImage ~= nil then
+		self._useEditableImageOverride = config.UseEditableImage
+	else
+		self._useEditableImageOverride = nil
+	end
+
 	self.url = url
 	self.targetPart = targetPart
 	self.surfaceFace = surfaceFace or Enum.NormalId.Front
@@ -101,32 +152,28 @@ function PngService:Generate(url, targetPart, surfaceFace, config)
 end
 
 function PngService:_render()
+	local entry = Cache:Get(self.url, parseImage, validateParsed)
 
-	local success, data = pcall(function()
-		return HttpService:GetAsync(self.url)
-	end)
+	self._format = entry.format
 
-	if not success then
-		error("Failed to load image from URL: " .. tostring(data))
-	end
+	if self._format == "GIF" then
+		self._gifComposer = GIF.fromRaw(entry.parsed)
 
-	local format = detectFormat(data)
-
-	local img
-	if format == "GIF" then
-		local gif = GIF.new(data)
-		local frameCount = gif:GetFrameCount()
+		local frameCount = self._gifComposer:GetFrameCount()
 		local frameIndex = self.config.Frame
 
 		if frameIndex > frameCount then
 			error(("PngService - Frame %d requested, but the GIF only has %d frame(s)."):format(frameIndex, frameCount), 2)
 		end
 
-		img = gif:GetFrame(frameIndex)
+		self.img = self._gifComposer:GetFrame(frameIndex)
+		self._currentFrame = frameIndex
 	else
-		img = PNG.new(data)
+		self.img = entry.parsed
+		self._currentFrame = 1
 	end
 
+	local img = self.img
 	local scaleFactor = 1
 	local MAX_DIM = self.config.MaxScale
 	if img.Width > MAX_DIM or img.Height > MAX_DIM then
@@ -136,9 +183,10 @@ function PngService:_render()
 	self.width = math.floor(img.Width * scaleFactor)
 	self.height = math.floor(img.Height * scaleFactor)
 	self.scaleFactor = scaleFactor
-	self.img = img
 
-	if self.renderMode == "Text" then
+	self._usingEditableImage = resolveUseEditableImage(self._useEditableImageOverride)
+
+	if self.renderMode == "Text" and not self._usingEditableImage then
 		local TEXT_SIZE = self.config.TextSize
 		local CHAR      = self.config.TextChar
 		local measured  = TextService:GetTextSize(
@@ -148,26 +196,83 @@ function PngService:_render()
 		self._textCharH = measured.Y
 	end
 
-	local container = self:_setupContainer()
+	self:_setupContainer()
+	self:_redraw()
+
+	return self
+end
+
+
+function PngService:_redraw()
+	if self._usingEditableImage then
+		EditableImage.Render(self, self.containerFrame)
+		return
+	end
+
+	if self.rowsContainer then
+		self.rowsContainer:Destroy()
+		self.rowsContainer = nil
+	end
 
 	local pixelBuffer = self:_buildPixelBuffer()
 
 	if self.renderMode == "Groovy" then
-		self:_renderRowsGroovy(container, pixelBuffer)
+		self:_renderRowsGroovy(self.containerFrame, pixelBuffer)
 	elseif self.renderMode == "Text" then
-		self:_renderRowsText(container, pixelBuffer)
+		self:_renderRowsText(self.containerFrame, pixelBuffer)
 	else
-		self:_renderRows(container, pixelBuffer)
+		self:_renderRows(self.containerFrame, pixelBuffer)
+	end
+end
+
+
+function PngService:SetFrame(frameIndex)
+	if self._format ~= "GIF" then
+		if frameIndex == 1 then
+			return self
+		end
+		error("PngService - SetFrame(" .. tostring(frameIndex) .. ") is invalid: this image is a static PNG with exactly 1 frame.", 2)
 	end
 
+	if type(frameIndex) ~= "number" or frameIndex ~= math.floor(frameIndex) or frameIndex < 1 then
+		error("PngService - SetFrame() expects a positive integer frame number, got " .. tostring(frameIndex), 2)
+	end
+
+	local frameCount = self._gifComposer:GetFrameCount()
+	if frameIndex > frameCount then
+		error(("PngService - Frame %d requested, but the GIF only has %d frame(s)."):format(frameIndex, frameCount), 2)
+	end
+
+	if frameIndex == self._currentFrame then
+		return self
+	end
+
+	self.img = self._gifComposer:GetFrame(frameIndex)
+	self._currentFrame = frameIndex
+
+	self:_redraw()
+
 	return self
+end
+
+
+function PngService:GetFrames()
+	if self._format == "GIF" then
+		return self._gifComposer:GetFrameCount()
+	end
+	return 1
+end
+
+
+function PngService:IsUsingEditableImage()
+	return self._usingEditableImage == true
 end
 
 function PngService:_setupContainer()
 	local targetPart = self.targetPart
 	local PIXEL_SIZE = self.config.PixelSize
 
-	local isTextMode = (self.renderMode == "Text")
+	local isTextMode = (self.renderMode == "Text") and not self._usingEditableImage
 	local canvasW = isTextMode and (self.width  * self._textCharW) or (self.width  * PIXEL_SIZE)
 	local canvasH = isTextMode and (self.height * self._textCharH) or (self.height * PIXEL_SIZE)
 
@@ -525,6 +630,8 @@ function PngService:_renderRowsText(container, pixelBuffer)
 end
 
 function PngService:Destroy()
+	EditableImage.Destroy(self)
+
 	if self.container and self.container:IsA("SurfaceGui") then
 		self.container:Destroy()
 	elseif self.containerFrame then
@@ -538,6 +645,21 @@ end
 
 function PngService:GetMode()
 	return self.renderMode
+end
+
+
+function PngService.IsEditableImageSupported()
+	return Capabilities.SupportsEditableImage()
+end
+
+
+function PngService.ClearCache()
+	Cache:Clear()
+end
+
+
+function PngService.SetMaxCachedImages(n)
+	Cache.MaxEntries = n
 end
 
 return PngService
